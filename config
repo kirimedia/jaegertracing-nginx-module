@@ -1,0 +1,22 @@
+ngx_feature="Jaegertracing module"
+have=NGX_JAEGERTRACING . auto/have
+
+ngx_addon_name=ngx_http_jaegertracing_module
+
+if test -n "$ngx_module_link"; then
+    ngx_module_type=HTTP
+    ngx_module_name=ngx_http_jaegertracing_module
+    ngx_module_incs="$ngx_addon_dir/src"
+    ngx_module_srcs="\
+        $ngx_addon_dir/src/ngx_http_jaegertracing_module.c\
+    "
+    ngx_module_libs=-lcjaeger
+    . auto/module
+else
+    HTTP_MODULES="$HTTP_MODULES ngx_http_jaegertracing_module"
+    HTTP_INCS="$HTTP_INCS $ngx_addon_dir/src"
+    NGX_ADDON_SRCS="$NGX_ADDON_SRCS \
+        $ngx_addon_dir/src/ngx_http_jaegertracing_module.c \
+    "
+    CORE_LIBS=-lcjaeger
+fi
