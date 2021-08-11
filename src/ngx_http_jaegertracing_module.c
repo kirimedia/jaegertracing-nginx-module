@@ -133,7 +133,9 @@ static char *
 ngx_http_jaegertracing_init_main_conf(ngx_conf_t* cf, void *conf)
 {
     ngx_http_jaegertracing_main_conf_t *jmcf = conf;
-    ngx_str_set(&jmcf->agent_addr, "127.0.0.1:6831");
+    if (jmcf->agent_addr.len == 0) {
+        ngx_str_set(&jmcf->agent_addr, "127.0.0.1:6831");
+    }
     return NGX_CONF_OK;
 }
 
@@ -236,7 +238,7 @@ ngx_http_jaegertracing_handler(ngx_http_request_t *r)
     ctx = cln->data;
     ngx_memzero(ctx, sizeof(ngx_http_jaegertracing_ctx_t));
 
-    if (value.len != 0 || value.len > 1 || *value.data != '0') {
+    if (value.len != 0 && *value.data != '0') {
         ctx->tracing = 1;
     }
 
