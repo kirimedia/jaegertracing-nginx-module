@@ -9,6 +9,7 @@
 #include "ngx_http_lua_util.h"
 
 
+static int ngx_http_lua_jaegertracing_is_enabled(lua_State *L);
 static int ngx_http_lua_jaegertracing_span_start(lua_State *L);
 static int ngx_http_lua_jaegertracing_span_finish(lua_State *L);
 static int ngx_http_lua_jaegertracing_span_log(lua_State *L);
@@ -18,6 +19,9 @@ void
 ngx_http_lua_inject_jaegertracing_api(lua_State *L)
 {
     lua_createtable(L, 0, 1);
+
+    lua_pushcfunction(L, ngx_http_lua_jaegertracing_is_enabled);
+    lua_setfield(L, -2, "is_enabled");
 
     lua_pushcfunction(L, ngx_http_lua_jaegertracing_span_start);
     lua_setfield(L, -2, "span_start");
@@ -191,6 +195,19 @@ ngx_http_lua_jaegertracing_span_log_helper(void *data, const char *key, const ch
 }
 
 static int
+ngx_http_lua_jaegertracing_is_enabled(lua_State *L) {
+    ngx_http_request_t *r;
+    r = ngx_http_lua_get_req(L);
+
+    if (r == NULL) {
+        luaL_error(L, "no request object found");
+    }
+
+    lua_pushboolean(L, ngx_http_jaegertracing_is_enabled(r));
+    return 1;
+}
+
+static int
 ngx_http_lua_jaegertracing_span_start(lua_State *L) {
     const char *operation_name = luaL_checkstring(L, 1);
     ngx_http_lua_jaegertracing_span_start_helper(L, operation_name);
@@ -207,7 +224,7 @@ ngx_http_lua_jaegertracing_span_finish(lua_State *L) {
 static int
 ngx_http_lua_jaegertracing_span_log(lua_State *L) {
     const char *key = luaL_checkstring(L, 1);
-    const char *value = luaL_checkstring(L, 2);
-    ngx_http_lua_jaegertracing_span_log_helper(L, key, value);
+    const char *value = lua_tostring(L, 2);
+    ngx_http_lua_jaegertracing_span_log_helper(L, key, value ? value : "nil");
     return 0;
 }

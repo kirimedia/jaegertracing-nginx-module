@@ -1,5 +1,5 @@
 ngx_feature="Jaegertracing module"
-have=NGX_JAEGERTRACING . auto/have
+have=NGX_HTTP_JAEGERTRACING . auto/have
 
 ngx_addon_name=ngx_http_jaegertracing_module
 

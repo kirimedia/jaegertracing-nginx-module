@@ -178,27 +178,9 @@ ngx_http_jaegertracing_cleanup(void *data)
 static ngx_http_jaegertracing_ctx_t *
 ngx_http_jaegertracing_get_module_ctx(ngx_http_request_t *r)
 {
-    ngx_pool_cleanup_t           *cln;
     ngx_http_jaegertracing_ctx_t  *ctx;
 
-    ctx = ngx_http_get_module_ctx(r, ngx_http_jaegertracing_module);
-
-    if (ctx == NULL && (r->internal || r->filter_finalize)) {
-
-        /*
-         * if module context was reset, the original address
-         * can still be found in the cleanup handler
-         */
-
-        for (cln = r->pool->cleanup; cln; cln = cln->next) {
-            if (cln->handler == ngx_http_jaegertracing_cleanup) {
-                ctx = cln->data;
-                break;
-            }
-        }
-        if (ctx)
-            ngx_http_set_ctx(r, ctx, ngx_http_jaegertracing_module);
-    }
+    ctx = ngx_http_get_module_ctx(r->main, ngx_http_jaegertracing_module);
 
     return ctx;
 }
@@ -263,7 +245,7 @@ ngx_http_jaegertracing_log(ngx_http_request_t *r)
     ngx_http_jaegertracing_ctx_t       *ctx;
 
     ctx = ngx_http_jaegertracing_get_module_ctx(r);
-    if (!ctx || !ctx->tracing)
+    if (!ctx || !ctx->tracing || r != r->main)
         return NGX_OK;
 
     cjaeger_span_finish(ctx->request_span);
@@ -421,6 +403,12 @@ void
 ngx_http_jaegertracing_span_finish(ngx_http_request_t *r, void *span) {
 
     if (!ngx_http_jaegertracing_is_enabled(r)) {
+        return;
+    }
+
+    void *request_span = ngx_http_jaegertracing_get_request_span(r);
+    if (span == request_span) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "request span can't be finished");
         return;
     }
 
