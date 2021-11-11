@@ -62,8 +62,7 @@ ngx_http_lua_jaegertracing_span_peek(lua_State *L) {
 
     ngx_http_lua_jaegertracing_get_spans(L, L);
 
-    if (lua_isnil(L, -1)) {
-
+    while (lua_isnil(L, -1) || luaL_getn(L, -1) == 0) {
         ngx_http_request_t *r = ngx_http_lua_get_req(L);
         ngx_http_lua_ctx_t *ctx = ngx_http_get_module_ctx(r, ngx_http_lua_module);
         ngx_http_lua_co_ctx_t *coctx = ngx_http_lua_get_co_ctx(L, ctx);
@@ -72,9 +71,12 @@ ngx_http_lua_jaegertracing_span_peek(lua_State *L) {
             lua_State *P = coctx->parent_co_ctx->co;
             ngx_http_lua_jaegertracing_get_spans(L, P);
         }
+        else {
+            break;
+        }
     }
 
-    if (!lua_isnil(L, -1)) {
+    if (!lua_isnil(L, -1) && luaL_getn(L, -1) != 0) {
         lua_rawgeti(L, -1, luaL_getn(L, -1));
         span = lua_touserdata(L, -1);
         lua_pop(L, 1);
