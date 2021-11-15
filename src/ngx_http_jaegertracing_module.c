@@ -230,6 +230,7 @@ ngx_http_jaegertracing_handler(ngx_http_request_t *r)
 
     if (ctx->tracing) {
         ctx->request_span = cjaeger_span_start(tracer, NULL, "request");
+fprintf(stderr, "%p start request span\n", ctx->request_span);
         if (ctx->request_span) {
             cjaeger_span_log2(ctx->request_span, "uri", (char*)r->uri.data, r->uri.len);
             cjaeger_span_log2(ctx->request_span, "args", (char*)r->args.data, r->args.len);
@@ -248,6 +249,7 @@ ngx_http_jaegertracing_log(ngx_http_request_t *r)
     if (!ctx || !ctx->tracing || r != r->main)
         return NGX_OK;
 
+fprintf(stderr, "%p stop request span\n", ctx->request_span);
     cjaeger_span_finish(ctx->request_span);
     return NGX_OK;
 }
