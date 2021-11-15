@@ -144,6 +144,7 @@ ngx_http_lua_jaegertracing_span_start_helper(void *data, const char *operation_n
 
     void *parent = ngx_http_lua_jaegertracing_span_peek(L);
     void *span = ngx_http_jaegertracing_span_start(r, parent, operation_name);
+    fprintf(stderr, "%p start %s from %p state %p\n", span, operation_name, parent, L);
     if (span == NULL)
         return;
 
@@ -169,6 +170,7 @@ ngx_http_lua_jaegertracing_span_finish_helper(void *data) {
     if (!span)
         return;
 
+    fprintf(stderr, "%p stop state %p\n", span, L);
     ngx_http_jaegertracing_span_finish(r, span);
 
     ngx_http_lua_jaegertracing_span_pop(L);
