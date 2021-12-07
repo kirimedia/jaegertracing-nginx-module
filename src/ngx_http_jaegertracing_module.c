@@ -231,8 +231,19 @@ ngx_http_jaegertracing_handler(ngx_http_request_t *r)
     if (ctx->tracing) {
         ctx->request_span = cjaeger_span_start(tracer, NULL, "request");
         if (ctx->request_span) {
+            static const ngx_str_t x_request_id_name = ngx_string("x_request_id");
+            static ngx_uint_t x_request_id_hash;
+            const ngx_http_variable_value_t *x_request_id;
+
+            if (!x_request_id_hash)
+                x_request_id_hash = ngx_hash_key(x_request_id_name.data, x_request_id_name.len);
+
             cjaeger_span_log2(ctx->request_span, "uri", (char*)r->uri.data, r->uri.len);
             cjaeger_span_log2(ctx->request_span, "args", (char*)r->args.data, r->args.len);
+
+            x_request_id = ngx_http_get_variable(r, (ngx_str_t *)&x_request_id_name, x_request_id_hash);
+            if (x_request_id != NULL && x_request_id->len != 0)
+                cjaeger_span_log2(ctx->request_span, "x_request_id", (char*)x_request_id->data, x_request_id->len);
         }
     }
 
