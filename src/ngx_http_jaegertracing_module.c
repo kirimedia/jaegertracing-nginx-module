@@ -420,6 +420,17 @@ ngx_http_jaegertracing_span_start(ngx_http_request_t *r, void *parent, const cha
     return span;
 }
 
+void *
+ngx_http_jaegertracing_span_start2(ngx_http_request_t *r, void *parent, const char *operation_name, size_t operation_name_len) {
+
+    if (!ngx_http_jaegertracing_is_enabled(r)) {
+        return NULL;
+    }
+
+    void *span = cjaeger_span_start2(tracer, parent, operation_name, operation_name_len);
+    return span;
+}
+
 void
 ngx_http_jaegertracing_span_finish(ngx_http_request_t *r, void *span) {
 
@@ -434,6 +445,15 @@ ngx_http_jaegertracing_span_finish(ngx_http_request_t *r, void *span) {
     }
 
     cjaeger_span_finish(span);
+}
+
+void ngx_http_jaegertracing_span_log2(ngx_http_request_t *r, void *span, const char *key, size_t key_len, const char *value, size_t value_len) {
+
+    if (!ngx_http_jaegertracing_is_enabled(r)) {
+        return;
+    }
+
+    cjaeger_span_log3(span, key, key_len, value, value_len);
 }
 
 void

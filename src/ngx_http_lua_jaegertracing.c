@@ -130,6 +130,11 @@ ngx_http_lua_jaegertracing_span_pop(lua_State *L) {
 
 void
 ngx_http_lua_jaegertracing_span_start_helper(void *data, const char *operation_name) {
+    ngx_http_lua_jaegertracing_span_start_helper2(data, operation_name, strlen(operation_name));
+}
+
+void
+ngx_http_lua_jaegertracing_span_start_helper2(void *data, const char *operation_name, size_t operation_name_len) {
     lua_State *L = (lua_State*)data;
 
     ngx_http_request_t *r;
@@ -143,7 +148,7 @@ ngx_http_lua_jaegertracing_span_start_helper(void *data, const char *operation_n
         return;
 
     void *parent = ngx_http_lua_jaegertracing_span_peek(L);
-    void *span = ngx_http_jaegertracing_span_start(r, parent, operation_name);
+    void *span = ngx_http_jaegertracing_span_start2(r, parent, operation_name, operation_name_len);
     if (span == NULL)
         return;
 
@@ -176,7 +181,7 @@ ngx_http_lua_jaegertracing_span_finish_helper(void *data) {
 }
 
 void
-ngx_http_lua_jaegertracing_span_log_helper(void *data, const char *key, const char *value) {
+ngx_http_lua_jaegertracing_span_log_helper2(void *data, const char *key, size_t key_len, const char *value, size_t value_len) {
     lua_State *L = (lua_State*)data;
 
     ngx_http_request_t *r;
@@ -193,8 +198,13 @@ ngx_http_lua_jaegertracing_span_log_helper(void *data, const char *key, const ch
     if (!span)
         return;
 
-    ngx_http_jaegertracing_span_log(r, span, key, value);
+    ngx_http_jaegertracing_span_log2(r, span, key, key_len, value, value_len);
     return;
+}
+
+void
+ngx_http_lua_jaegertracing_span_log_helper(void *data, const char *key, const char *value) {
+    ngx_http_lua_jaegertracing_span_log_helper2(data, key, key != NULL ? strlen(key) : 0, value, value != NULL ? strlen(value) : 0);
 }
 
 static int
@@ -212,8 +222,9 @@ ngx_http_lua_jaegertracing_is_enabled(lua_State *L) {
 
 static int
 ngx_http_lua_jaegertracing_span_start(lua_State *L) {
-    const char *operation_name = luaL_checkstring(L, 1);
-    ngx_http_lua_jaegertracing_span_start_helper(L, operation_name);
+    size_t operation_name_len;
+    const char *operation_name = luaL_checklstring(L, 1, &operation_name_len);
+    ngx_http_lua_jaegertracing_span_start_helper2(L, operation_name, operation_name_len);
     return 0;
 }
 
@@ -226,8 +237,13 @@ ngx_http_lua_jaegertracing_span_finish(lua_State *L) {
 
 static int
 ngx_http_lua_jaegertracing_span_log(lua_State *L) {
-    const char *key = luaL_checkstring(L, 1);
-    const char *value = lua_tostring(L, 2);
-    ngx_http_lua_jaegertracing_span_log_helper(L, key, value ? value : "nil");
+    size_t key_len, value_len;
+    const char *key = luaL_checklstring(L, 1, &key_len);
+    const char *value = lua_tolstring(L, 2, &value_len);
+    if (value == NULL) {
+        value = "nil";
+        value_len = 3;
+    }
+    ngx_http_lua_jaegertracing_span_log_helper2(L, key, key_len, value, value_len);
     return 0;
 }
