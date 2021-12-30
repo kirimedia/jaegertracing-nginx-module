@@ -8,6 +8,7 @@
 typedef struct {
     ngx_str_t service_name;
     ngx_str_t agent_addr;
+    ngx_str_t collector_endpoint;
 } ngx_http_jaegertracing_main_conf_t;
 
 typedef struct {
@@ -44,6 +45,13 @@ static ngx_command_t ngx_http_jaegertracing_commands[] = {
       ngx_conf_set_str_slot,
       NGX_HTTP_MAIN_CONF_OFFSET,
       offsetof(ngx_http_jaegertracing_main_conf_t, agent_addr),
+      NULL },
+
+    { ngx_string("jaegertracing_collector_endpoint"),
+      NGX_HTTP_MAIN_CONF|NGX_CONF_TAKE1,
+      ngx_conf_set_str_slot,
+      NGX_HTTP_MAIN_CONF_OFFSET,
+      offsetof(ngx_http_jaegertracing_main_conf_t, collector_endpoint),
       NULL },
 
     { ngx_string("set_jaegertracing_from"),
@@ -98,12 +106,14 @@ static void *tracer;
 static ngx_int_t
 ngx_http_jaegertracing_init_process(ngx_cycle_t *cycle) {
     ngx_http_jaegertracing_main_conf_t *jmcf = ngx_http_cycle_get_module_main_conf(cycle, ngx_http_jaegertracing_module);
-    if (jmcf->service_name.data && jmcf->agent_addr.data) {
+    if (jmcf->service_name.data && (jmcf->agent_addr.data || jmcf->collector_endpoint.data)) {
         char service_name[jmcf->service_name.len + 1];
         ngx_sprintf((u_char*)service_name, "%V%Z", &jmcf->service_name);
         char agent_addr[jmcf->agent_addr.len + 1];
         ngx_sprintf((u_char*)agent_addr, "%V%Z", &jmcf->agent_addr);
-        tracer = cjaeger_tracer_create(service_name, agent_addr);
+        char collector_endpoint[jmcf->collector_endpoint.len + 1];
+        ngx_sprintf((u_char*)collector_endpoint, "%V%Z", &jmcf->collector_endpoint);
+        tracer = cjaeger_tracer_create2(service_name, agent_addr, collector_endpoint);
     }
     return NGX_OK;
 }
