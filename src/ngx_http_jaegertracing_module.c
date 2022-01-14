@@ -423,11 +423,27 @@ ngx_http_jaegertracing_span_start(ngx_http_request_t *r, void *parent, const cha
 void *
 ngx_http_jaegertracing_span_start2(ngx_http_request_t *r, void *parent, const char *operation_name, size_t operation_name_len) {
 
+    void *span = cjaeger_span_start2(tracer, parent, operation_name, operation_name_len);
+    return span;
+}
+
+uint64_t
+ngx_http_jaegertracing_span_id(ngx_http_request_t *r, void *span, uint64_t *trace_id_hi, uint64_t *trace_id_lo) {
+
+    if (!ngx_http_jaegertracing_is_enabled(r)) {
+        return 0;
+    }
+    return cjaeger_span_id(span, trace_id_hi, trace_id_lo);
+}
+
+void *
+ngx_http_jaegertracing_span_start_from(ngx_http_request_t *r, uint64_t trace_id_hi, uint64_t trace_id_lo, uint64_t parent_id, const char *operation_name, size_t operation_name_len) {
+
     if (!ngx_http_jaegertracing_is_enabled(r)) {
         return NULL;
     }
 
-    void *span = cjaeger_span_start2(tracer, parent, operation_name, operation_name_len);
+    void *span = cjaeger_span_start_from(tracer, trace_id_hi, trace_id_lo, parent_id, operation_name, operation_name_len);
     return span;
 }
 
