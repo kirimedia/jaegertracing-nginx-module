@@ -16,6 +16,7 @@ typedef struct {
 typedef struct {
     ngx_array_t              *from;     /* array of ngx_cidr_t */
     ngx_http_complex_value_t *variable;
+    double                    sample;
 } ngx_http_jaegertracing_loc_conf_t;
 
 typedef struct {
@@ -33,6 +34,7 @@ static char *ngx_http_jaegertracing_merge_loc_conf(ngx_conf_t *cf, void *parent,
 static char *ngx_http_set_jaegertracing_header(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 static char *ngx_http_set_jaegertracing_from(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 static char *ngx_http_set_jaegertracing_variable(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
+static char *ngx_http_set_jaegertracing_sample(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 
 static ngx_command_t ngx_http_jaegertracing_commands[] = {
 
@@ -74,6 +76,13 @@ static ngx_command_t ngx_http_jaegertracing_commands[] = {
     { ngx_string("set_jaegertracing"),
       NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
       ngx_http_set_jaegertracing_variable,
+      NGX_HTTP_LOC_CONF_OFFSET,
+      0,
+      NULL },
+
+    { ngx_string("set_jaegertracing_sample"),
+      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
+      ngx_http_set_jaegertracing_sample,
       NGX_HTTP_LOC_CONF_OFFSET,
       0,
       NULL },
@@ -172,6 +181,7 @@ ngx_http_jaegertracing_create_loc_conf(ngx_conf_t *cf)
     if (conf == NULL) {
         return NULL;
     }
+    conf->sample = -1;
 
     return conf;
 }
@@ -190,6 +200,9 @@ ngx_http_jaegertracing_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child)
     if (conf->variable == NULL) {
         conf->variable = prev->variable;
     }
+
+    if (conf->sample < 0)
+        conf->sample = (prev->sample < 0) ? 0 : prev->sample;
 
     return NGX_CONF_OK;
 }
@@ -228,12 +241,15 @@ ngx_http_jaegertracing_handler(ngx_http_request_t *r)
     }
 
     ngx_str_t value = ngx_null_string;
+    int sample = 0;
 
     if (jlcf->from == NULL || ngx_cidr_match(r->connection->sockaddr, jlcf->from) == NGX_OK) {
 
         ngx_http_complex_value_t *cv = jlcf->variable;
         if (ngx_http_complex_value(r, cv, &value) != NGX_OK)
             return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    } else if (jlcf->sample > 0) {
+        sample = (ngx_random() / (double)((uint64_t)RAND_MAX + 1)) < jlcf->sample;
     }
 
     cln = ngx_pool_cleanup_add(r->pool, sizeof(ngx_http_jaegertracing_ctx_t));
@@ -244,7 +260,7 @@ ngx_http_jaegertracing_handler(ngx_http_request_t *r)
     ctx = cln->data;
     ngx_memzero(ctx, sizeof(ngx_http_jaegertracing_ctx_t));
 
-    if (value.len != 0 && *value.data != '0') {
+    if (sample || (value.len != 0 && *value.data != '0')) {
         ctx->tracing = 1;
     }
 
@@ -268,6 +284,11 @@ ngx_http_jaegertracing_handler(ngx_http_request_t *r)
             x_request_id = ngx_http_get_variable(r, (ngx_str_t *)&x_request_id_name, x_request_id_hash);
             if (x_request_id != NULL && x_request_id->len != 0)
                 cjaeger_span_log2(ctx->request_span, "x_request_id", (char*)x_request_id->data, x_request_id->len);
+
+            if (value.len != 0)
+                cjaeger_span_log3(ctx->request_span, "user", 4, "true", 4);
+            else
+                cjaeger_span_log3(ctx->request_span, "sample", 6, "true", 4);
         }
     }
 
@@ -403,6 +424,24 @@ ngx_http_set_jaegertracing_variable(ngx_conf_t *cf, ngx_command_t *cmd, void *co
 
     if (ngx_http_compile_complex_value(&ccv) != NGX_OK)
         return NGX_CONF_ERROR;
+
+    return NGX_CONF_OK;
+}
+
+static char*
+ngx_http_set_jaegertracing_sample(ngx_conf_t *cf, ngx_command_t *cmd, void *conf) {
+
+    ngx_http_jaegertracing_loc_conf_t *jlcf = conf;
+    ngx_str_t *value = cf->args->elts;
+
+    if (jlcf->sample >= 0)
+        return "is duplicate";
+
+    ngx_int_t sample_i = ngx_atofp(value[1].data, value[1].len, 6);
+    if (sample_i < 0 || sample_i > 1000000)
+        return "is invalid";
+
+    jlcf->sample = sample_i / (double)1000000;
 
     return NGX_CONF_OK;
 }
