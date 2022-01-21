@@ -530,7 +530,7 @@ ngx_http_jaegertracing_header_known(ngx_http_jaegertracing_main_conf_t *jmcf, co
     for (i = 0; i < sizeof(headers) / sizeof(headers[0]); i++) {
         const char *ptr = headers[i].name;
 
-        if (ngx_strncasecmp(name, ptr, name_len) != 0)
+        if (ngx_strncasecmp((u_char*)name, (u_char*)ptr, name_len) != 0)
             continue;
         if (!headers[i].prefix && ptr[name_len] != '\0')
             continue;
