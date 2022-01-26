@@ -10,6 +10,7 @@ typedef struct {
     ngx_str_t service_name;
     ngx_str_t agent_addr;
     ngx_str_t collector_endpoint;
+    ngx_flag_t traceid_128bit;
     cjaeger_tracer_headers_config headers_config;
     unsigned flags;
 } ngx_http_jaegertracing_main_conf_t;
@@ -59,6 +60,13 @@ static ngx_command_t ngx_http_jaegertracing_commands[] = {
       ngx_conf_set_str_slot,
       NGX_HTTP_MAIN_CONF_OFFSET,
       offsetof(ngx_http_jaegertracing_main_conf_t, collector_endpoint),
+      NULL },
+
+    { ngx_string("jaegertracing_traceid_128bit"),
+      NGX_HTTP_MAIN_CONF|NGX_CONF_TAKE1,
+      ngx_conf_set_flag_slot,
+      NGX_HTTP_MAIN_CONF_OFFSET,
+      offsetof(ngx_http_jaegertracing_main_conf_t, traceid_128bit),
       NULL },
 
     { ngx_string("jaegertracing_propagation_format"),
@@ -163,6 +171,7 @@ ngx_http_jaegertracing_create_main_conf(ngx_conf_t *cf)
     if (conf == NULL) {
         return NGX_CONF_ERROR;
     }
+    conf->traceid_128bit = NGX_CONF_UNSET;
     conf->headers_config.jaeger_debug_header = "";
     conf->headers_config.jaeger_baggage_header = "";
     conf->headers_config.trace_context_header_name = "";
@@ -178,6 +187,9 @@ ngx_http_jaegertracing_init_main_conf(ngx_conf_t* cf, void *conf)
     if (jmcf->agent_addr.len == 0) {
         ngx_str_set(&jmcf->agent_addr, "127.0.0.1:6831");
     }
+    if (jmcf->traceid_128bit > 0)
+        jmcf->flags |= CJAEGER_TRACEID_128BIT;
+
     if (!(jmcf->flags & CJAEGER_PROPAGATION_ANY)) {
         if (   *jmcf->headers_config.jaeger_debug_header != '\0'
             || *jmcf->headers_config.jaeger_baggage_header != '\0'
