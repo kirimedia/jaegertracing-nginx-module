@@ -11,6 +11,7 @@ typedef struct {
     ngx_str_t agent_addr;
     ngx_str_t collector_endpoint;
     cjaeger_tracer_headers_config headers_config;
+    unsigned flags;
 } ngx_http_jaegertracing_main_conf_t;
 
 typedef struct {
@@ -31,6 +32,7 @@ static void *ngx_http_jaegertracing_create_main_conf(ngx_conf_t *cf);
 static char *ngx_http_jaegertracing_init_main_conf(ngx_conf_t* cf, void *conf);
 static void *ngx_http_jaegertracing_create_loc_conf(ngx_conf_t *cf);
 static char *ngx_http_jaegertracing_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child);
+static char *ngx_http_set_jaegertracing_propagation_format(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 static char *ngx_http_set_jaegertracing_header(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 static char *ngx_http_set_jaegertracing_from(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 static char *ngx_http_set_jaegertracing_variable(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
@@ -57,6 +59,13 @@ static ngx_command_t ngx_http_jaegertracing_commands[] = {
       ngx_conf_set_str_slot,
       NGX_HTTP_MAIN_CONF_OFFSET,
       offsetof(ngx_http_jaegertracing_main_conf_t, collector_endpoint),
+      NULL },
+
+    { ngx_string("jaegertracing_propagation_format"),
+      NGX_HTTP_MAIN_CONF|NGX_CONF_TAKE1,
+      ngx_http_set_jaegertracing_propagation_format,
+      NGX_HTTP_MAIN_CONF_OFFSET,
+      0,
       NULL },
 
     { ngx_string("jaegertracing_header_context"),
@@ -132,7 +141,7 @@ ngx_http_jaegertracing_init_process(ngx_cycle_t *cycle) {
         ngx_sprintf((u_char*)agent_addr, "%V%Z", &jmcf->agent_addr);
         char collector_endpoint[jmcf->collector_endpoint.len + 1];
         ngx_sprintf((u_char*)collector_endpoint, "%V%Z", &jmcf->collector_endpoint);
-        tracer = cjaeger_tracer_create2(service_name, agent_addr, collector_endpoint, &jmcf->headers_config);
+        tracer = cjaeger_tracer_create3(service_name, agent_addr, collector_endpoint, jmcf->flags, &jmcf->headers_config);
     }
     return NGX_OK;
 }
@@ -169,6 +178,30 @@ ngx_http_jaegertracing_init_main_conf(ngx_conf_t* cf, void *conf)
     if (jmcf->agent_addr.len == 0) {
         ngx_str_set(&jmcf->agent_addr, "127.0.0.1:6831");
     }
+    if (!(jmcf->flags & CJAEGER_PROPAGATION_ANY)) {
+        if (   *jmcf->headers_config.jaeger_debug_header != '\0'
+            || *jmcf->headers_config.jaeger_baggage_header != '\0'
+            || *jmcf->headers_config.trace_context_header_name != '\0'
+            || *jmcf->headers_config.trace_baggage_header_prefix != '\0')
+
+            jmcf->flags |= CJAEGER_PROPAGATION_JAEGER;
+        else
+            jmcf->flags |= CJAEGER_PROPAGATION_W3C;
+    }
+
+    if (!!(jmcf->flags & CJAEGER_PROPAGATION_W3C)) {
+        /*
+         * It is a hack. jmcf->headers_config is not used by jaeger when W3C
+         * propagation is enabled (jaeger just uses constant names below), but
+         * we do use it while headers filtering in
+         * ngx_http_jaegertracing_header_known().
+         */
+        jmcf->headers_config.trace_context_header_name = "traceparent";
+        jmcf->headers_config.jaeger_debug_header = "tracestate";
+        jmcf->headers_config.jaeger_baggage_header = "";
+        jmcf->headers_config.trace_baggage_header_prefix = "";
+    }
+
     return NGX_CONF_OK;
 }
 
@@ -339,6 +372,25 @@ ngx_http_jaegertracing_init(ngx_conf_t *cf)
     *h = ngx_http_jaegertracing_log;
 
     return NGX_OK;
+}
+
+static char*
+ngx_http_set_jaegertracing_propagation_format(ngx_conf_t *cf, ngx_command_t *cmd, void *conf) {
+
+    ngx_http_jaegertracing_main_conf_t *jmcf = conf;
+    ngx_str_t *value = cf->args->elts;
+
+    if (!!(jmcf->flags & CJAEGER_PROPAGATION_ANY))
+        return "is duplicate";
+
+    if (!ngx_strcasecmp(value[1].data, (u_char *)"jaeger"))
+        jmcf->flags |= CJAEGER_PROPAGATION_JAEGER;
+    else if (!ngx_strcasecmp(value[1].data, (u_char *)"w3c"))
+        jmcf->flags |= CJAEGER_PROPAGATION_W3C;
+    else
+        return "is invalid";
+
+    return NGX_CONF_OK;
 }
 
 static char*
