@@ -501,11 +501,11 @@ ngx_http_set_jaegertracing_sample(ngx_conf_t *cf, ngx_command_t *cmd, void *conf
     if (jlcf->sample >= 0)
         return "is duplicate";
 
-    ngx_int_t sample_i = ngx_atofp(value[1].data, value[1].len, 6);
-    if (sample_i < 0 || sample_i > 1000000)
+    ngx_int_t sample_i = ngx_atofp(value[1].data, value[1].len, 9);
+    if (sample_i < 0 || sample_i > 1000000000)
         return "is invalid";
 
-    jlcf->sample = sample_i / (double)1000000;
+    jlcf->sample = sample_i / (double)1000000000;
 
     return NGX_CONF_OK;
 }
