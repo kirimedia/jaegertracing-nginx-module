@@ -15,6 +15,7 @@
 static int ngx_http_lua_jaegertracing_is_enabled(lua_State *L);
 static int ngx_http_lua_jaegertracing_span_start(lua_State *L);
 static int ngx_http_lua_jaegertracing_span_id(lua_State *L);
+static int ngx_http_lua_jaegertracing_span_debug(lua_State *L);
 static int ngx_http_lua_jaegertracing_span_headers(lua_State *L);
 static int ngx_http_lua_jaegertracing_span_finish(lua_State *L);
 static int ngx_http_lua_jaegertracing_span_log(lua_State *L);
@@ -33,6 +34,9 @@ ngx_http_lua_inject_jaegertracing_api(lua_State *L)
 
     lua_pushcfunction(L, ngx_http_lua_jaegertracing_span_id);
     lua_setfield(L, -2, "span_id");
+
+    lua_pushcfunction(L, ngx_http_lua_jaegertracing_span_debug);
+    lua_setfield(L, -2, "span_debug");
 
     lua_pushcfunction(L, ngx_http_lua_jaegertracing_span_headers);
     lua_setfield(L, -2, "span_headers");
@@ -408,6 +412,29 @@ ngx_http_lua_jaegertracing_span_id(lua_State *L) {
     lua_pushlstring(L, span_id_buf, 16);
 
     return 2;
+}
+
+bool
+ngx_http_lua_jaegertracing_span_debug_helper(void *data) {
+    lua_State *L = data;
+
+    ngx_http_request_t *r;
+    r = ngx_http_lua_get_req(L);
+
+    if (r == NULL) {
+        luaL_error(L, "no request object found");
+    }
+
+    if (!ngx_http_jaegertracing_is_enabled(r))
+        return false;
+
+    return ngx_http_jaegertracing_span_debug(r, ngx_http_lua_jaegertracing_span_peek(L));
+}
+
+static int
+ngx_http_lua_jaegertracing_span_debug(lua_State *L) {
+    lua_pushboolean(L, ngx_http_lua_jaegertracing_span_debug_helper(L));
+    return 1;
 }
 
 static int ngx_http_lua_jaegertracing_header_set(const char *name, size_t name_len, const char *value, size_t value_len, void *arg) {
