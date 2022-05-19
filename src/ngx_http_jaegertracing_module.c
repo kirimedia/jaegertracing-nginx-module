@@ -287,6 +287,7 @@ ngx_http_jaegertracing_handler(ngx_http_request_t *r)
 
     ngx_str_t value = ngx_null_string;
     int sample = 0;
+    unsigned span_flags = 0;
 
     if (jlcf->from == NULL || ngx_cidr_match(r->connection->sockaddr, jlcf->from) == NGX_OK) {
 
@@ -307,6 +308,8 @@ ngx_http_jaegertracing_handler(ngx_http_request_t *r)
 
     if (sample || (value.len != 0 && *value.data != '0')) {
         ctx->tracing = 1;
+        if (!sample && isdigit(*value.data) && *value.data - '0' >= 2)
+            span_flags |= CJAEGER_SPAN_DEBUG;
     }
 
     cln->handler = ngx_http_jaegertracing_cleanup;
@@ -314,7 +317,8 @@ ngx_http_jaegertracing_handler(ngx_http_request_t *r)
     ngx_http_set_ctx(r, ctx, ngx_http_jaegertracing_module);
 
     if (ctx->tracing) {
-        ctx->request_span = cjaeger_span_start(tracer, NULL, "request");
+        static const ngx_str_t request_name = ngx_string("request");
+        ctx->request_span = cjaeger_span_start3(tracer, NULL, (char*)request_name.data, request_name.len, span_flags);
         if (ctx->request_span) {
             static const ngx_str_t x_request_id_name = ngx_string("x_request_id");
             static ngx_uint_t x_request_id_hash;
@@ -563,6 +567,11 @@ ngx_http_jaegertracing_span_id(ngx_http_request_t *r, void *span, uint64_t *trac
         return 0;
     }
     return cjaeger_span_id(span, trace_id_hi, trace_id_lo);
+}
+
+int ngx_http_jaegertracing_span_debug(ngx_http_request_t *r, void *span) {
+
+    return span != NULL && cjaeger_span_debug(span);
 }
 
 void *

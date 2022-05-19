@@ -12,6 +12,7 @@ void *ngx_http_jaegertracing_get_request_span(ngx_http_request_t *r);
 void *ngx_http_jaegertracing_span_start(ngx_http_request_t *r, void *parent, const char *operation_name);
 void *ngx_http_jaegertracing_span_start2(ngx_http_request_t *r, void *parent, const char *operation_name, size_t operation_name_len);
 uint64_t ngx_http_jaegertracing_span_id(ngx_http_request_t *r, void *span, uint64_t *trace_id_hi, uint64_t *trace_id_lo);
+int ngx_http_jaegertracing_span_debug(ngx_http_request_t *r, void *span);
 void *ngx_http_jaegertracing_span_start_from(ngx_http_request_t *r, uint64_t trace_id_hi, uint64_t trace_id_lo, uint64_t parent_id, const char *operation_name, size_t operation_name_len);
 int ngx_http_jaegertracing_span_headers_set(ngx_http_request_t *r, void *span, cjaeger_header_set header_set, void *header_set_arg);
 void *ngx_http_jaegertracing_span_start_headers(ngx_http_request_t *r, cjaeger_header_trav_start trav_start, cjaeger_header_trav_each trav_each, void *trav_arg, const char *operation_name, size_t operation_name_len);
