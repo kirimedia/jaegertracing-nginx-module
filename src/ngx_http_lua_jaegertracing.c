@@ -348,7 +348,9 @@ ngx_http_lua_jaegertracing_span_start(lua_State *L) {
     if (nargs > 1) {
         size_t id_len;
         const char *id = lua_tolstring(L, 2, &id_len);
-        if (id != NULL) {
+        if (id == NULL)
+            return luaL_error(L, "cannot convert trace_id to string");
+        else {
             if (id_len == 16) {
                 if (!ngx_http_lua_jaegertracing_hextouint64(id, 16, &trace_id_lo))
                     return luaL_error(L, "trace_id must be a hexadecimal string");
@@ -363,7 +365,9 @@ ngx_http_lua_jaegertracing_span_start(lua_State *L) {
     if (nargs > 2) {
         size_t id_len;
         const char *id = lua_tolstring(L, 3, &id_len);
-        if (id != NULL) {
+        if (id == NULL)
+            return luaL_error(L, "cannot convert parent_id to string");
+        else {
             if (id_len != 16)
                 return luaL_error(L, "parent_id length must be equal to 16");
             if (!ngx_http_lua_jaegertracing_hextouint64(id, 16, &parent_id))
