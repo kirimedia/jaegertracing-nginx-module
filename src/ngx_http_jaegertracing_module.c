@@ -667,17 +667,27 @@ ngx_http_jaegertracing_trav_each(const char **name, size_t *name_len, const char
 void *
 ngx_http_jaegertracing_span_start_headers(ngx_http_request_t *r, cjaeger_header_trav_start trav_start, cjaeger_header_trav_each trav_each, void *trav_arg, const char *operation_name, size_t operation_name_len)
 {
-    if (!ngx_http_jaegertracing_is_enabled(r)) {
+    ngx_http_jaegertracing_trav_ctx tctx;
+    tctx.jmcf = ngx_http_get_module_main_conf(r, ngx_http_jaegertracing_module);
+    tctx.trav_start = trav_start;
+    tctx.trav_each = trav_each;
+    tctx.trav_arg = trav_arg;
+
+    void *span = cjaeger_span_start_headers(tracer, ngx_http_jaegertracing_trav_start, ngx_http_jaegertracing_trav_each, &tctx, operation_name, operation_name_len);
+    if (span == NULL)
         return NULL;
+
+    ngx_http_jaegertracing_ctx_t *ctx = ngx_http_jaegertracing_get_module_ctx(r);
+    if (ctx == NULL) {
+        if ((ctx = ngx_http_jaegertracing_add_module_ctx(r)) == NULL) {
+            cjaeger_span_finish(span);
+            return NULL;
+        }
     }
+    if (ctx->request_span == NULL)
+        ctx->request_span = span;
+    ctx->tracing = 1;
 
-    ngx_http_jaegertracing_trav_ctx ctx;
-    ctx.jmcf = ngx_http_get_module_main_conf(r, ngx_http_jaegertracing_module);
-    ctx.trav_start = trav_start;
-    ctx.trav_each = trav_each;
-    ctx.trav_arg = trav_arg;
-
-    void *span = cjaeger_span_start_headers(tracer, ngx_http_jaegertracing_trav_start, ngx_http_jaegertracing_trav_each, &ctx, operation_name, operation_name_len);
     return span;
 }
 
@@ -688,13 +698,15 @@ ngx_http_jaegertracing_span_finish(ngx_http_request_t *r, void *span) {
         return;
     }
 
-    void *request_span = ngx_http_jaegertracing_get_request_span(r);
-    if (span == request_span) {
-        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "request span can't be finished");
-        return;
-    }
+    ngx_http_jaegertracing_ctx_t *ctx = ngx_http_jaegertracing_get_module_ctx(r);
+    void *request_span = ctx->request_span;
 
     cjaeger_span_finish(span);
+
+    if (span == request_span) {
+        ctx->request_span = NULL;
+        ctx->tracing = 0;
+    }
 }
 
 void ngx_http_jaegertracing_span_log2(ngx_http_request_t *r, void *span, const char *key, size_t key_len, const char *value, size_t value_len) {
