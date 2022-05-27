@@ -271,12 +271,31 @@ ngx_http_jaegertracing_get_module_ctx(ngx_http_request_t *r)
     return ctx;
 }
 
+static ngx_http_jaegertracing_ctx_t *
+ngx_http_jaegertracing_add_module_ctx(ngx_http_request_t *r)
+{
+    ngx_http_jaegertracing_ctx_t       *ctx;
+    ngx_pool_cleanup_t                 *cln;
+
+    cln = ngx_pool_cleanup_add(r->pool, sizeof(*ctx));
+    if (cln == NULL)
+        return NULL;
+
+    ctx = cln->data;
+    ngx_memzero(ctx, sizeof(*ctx));
+
+    cln->handler = ngx_http_jaegertracing_cleanup;
+
+    ngx_http_set_ctx(r, ctx, ngx_http_jaegertracing_module);
+
+    return ctx;
+}
+
 static ngx_int_t
 ngx_http_jaegertracing_handler(ngx_http_request_t *r)
 {
     ngx_http_jaegertracing_ctx_t       *ctx;
     ngx_http_jaegertracing_loc_conf_t  *jlcf;
-    ngx_pool_cleanup_t                 *cln;
 
     jlcf = ngx_http_get_module_loc_conf(r, ngx_http_jaegertracing_module);
     if (jlcf->variable == NULL) {
@@ -302,23 +321,16 @@ ngx_http_jaegertracing_handler(ngx_http_request_t *r)
         sample = (ngx_random() / (double)((uint64_t)RAND_MAX + 1)) < jlcf->sample;
     }
 
-    cln = ngx_pool_cleanup_add(r->pool, sizeof(ngx_http_jaegertracing_ctx_t));
-    if (cln == NULL) {
+    ctx = ngx_http_jaegertracing_add_module_ctx(r);
+    if (ctx == NULL) {
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
-
-    ctx = cln->data;
-    ngx_memzero(ctx, sizeof(ngx_http_jaegertracing_ctx_t));
 
     if (sample || (value.len != 0 && *value.data != '0')) {
         ctx->tracing = 1;
         if (!sample && isdigit(*value.data) && *value.data - '0' >= 2)
             span_flags |= CJAEGER_SPAN_DEBUG;
     }
-
-    cln->handler = ngx_http_jaegertracing_cleanup;
-
-    ngx_http_set_ctx(r, ctx, ngx_http_jaegertracing_module);
 
     if (ctx->tracing) {
         static const ngx_str_t request_name = ngx_string("request");
