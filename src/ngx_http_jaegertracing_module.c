@@ -255,6 +255,10 @@ ngx_http_jaegertracing_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child)
 static void
 ngx_http_jaegertracing_cleanup(void *data)
 {
+    ngx_http_jaegertracing_ctx_t *ctx = data;
+
+    if (ctx->request_span != NULL)
+        cjaeger_span_finish(ctx->request_span);
 }
 
 static ngx_http_jaegertracing_ctx_t *
@@ -345,20 +349,6 @@ ngx_http_jaegertracing_handler(ngx_http_request_t *r)
 }
 
 static ngx_int_t
-ngx_http_jaegertracing_log(ngx_http_request_t *r)
-{
-    ngx_http_jaegertracing_ctx_t       *ctx;
-
-    ctx = ngx_http_jaegertracing_get_module_ctx(r);
-    if (!ctx || !ctx->tracing || r != r->main)
-        return NGX_OK;
-
-    cjaeger_span_finish(ctx->request_span);
-    return NGX_OK;
-}
-
-
-static ngx_int_t
 ngx_http_jaegertracing_init(ngx_conf_t *cf)
 {
     ngx_http_handler_pt        *h;
@@ -379,13 +369,6 @@ ngx_http_jaegertracing_init(ngx_conf_t *cf)
     }
 
     *h = ngx_http_jaegertracing_handler;
-
-    h = ngx_array_push(&jmcf->phases[NGX_HTTP_LOG_PHASE].handlers);
-    if (h == NULL) {
-        return NGX_ERROR;
-    }
-
-    *h = ngx_http_jaegertracing_log;
 
     return NGX_OK;
 }
