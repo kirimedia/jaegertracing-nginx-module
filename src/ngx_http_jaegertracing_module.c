@@ -255,6 +255,10 @@ ngx_http_jaegertracing_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child)
 static void
 ngx_http_jaegertracing_cleanup(void *data)
 {
+    ngx_http_jaegertracing_ctx_t *ctx = data;
+
+    if (ctx->request_span != NULL)
+        cjaeger_span_finish(ctx->request_span);
 }
 
 static ngx_http_jaegertracing_ctx_t *
@@ -267,12 +271,31 @@ ngx_http_jaegertracing_get_module_ctx(ngx_http_request_t *r)
     return ctx;
 }
 
+static ngx_http_jaegertracing_ctx_t *
+ngx_http_jaegertracing_add_module_ctx(ngx_http_request_t *r)
+{
+    ngx_http_jaegertracing_ctx_t       *ctx;
+    ngx_pool_cleanup_t                 *cln;
+
+    cln = ngx_pool_cleanup_add(r->pool, sizeof(*ctx));
+    if (cln == NULL)
+        return NULL;
+
+    ctx = cln->data;
+    ngx_memzero(ctx, sizeof(*ctx));
+
+    cln->handler = ngx_http_jaegertracing_cleanup;
+
+    ngx_http_set_ctx(r, ctx, ngx_http_jaegertracing_module);
+
+    return ctx;
+}
+
 static ngx_int_t
 ngx_http_jaegertracing_handler(ngx_http_request_t *r)
 {
     ngx_http_jaegertracing_ctx_t       *ctx;
     ngx_http_jaegertracing_loc_conf_t  *jlcf;
-    ngx_pool_cleanup_t                 *cln;
 
     jlcf = ngx_http_get_module_loc_conf(r, ngx_http_jaegertracing_module);
     if (jlcf->variable == NULL) {
@@ -298,23 +321,16 @@ ngx_http_jaegertracing_handler(ngx_http_request_t *r)
         sample = (ngx_random() / (double)((uint64_t)RAND_MAX + 1)) < jlcf->sample;
     }
 
-    cln = ngx_pool_cleanup_add(r->pool, sizeof(ngx_http_jaegertracing_ctx_t));
-    if (cln == NULL) {
+    ctx = ngx_http_jaegertracing_add_module_ctx(r);
+    if (ctx == NULL) {
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
-
-    ctx = cln->data;
-    ngx_memzero(ctx, sizeof(ngx_http_jaegertracing_ctx_t));
 
     if (sample || (value.len != 0 && *value.data != '0')) {
         ctx->tracing = 1;
         if (!sample && isdigit(*value.data) && *value.data - '0' >= 2)
             span_flags |= CJAEGER_SPAN_DEBUG;
     }
-
-    cln->handler = ngx_http_jaegertracing_cleanup;
-
-    ngx_http_set_ctx(r, ctx, ngx_http_jaegertracing_module);
 
     if (ctx->tracing) {
         static const ngx_str_t request_name = ngx_string("request");
@@ -345,20 +361,6 @@ ngx_http_jaegertracing_handler(ngx_http_request_t *r)
 }
 
 static ngx_int_t
-ngx_http_jaegertracing_log(ngx_http_request_t *r)
-{
-    ngx_http_jaegertracing_ctx_t       *ctx;
-
-    ctx = ngx_http_jaegertracing_get_module_ctx(r);
-    if (!ctx || !ctx->tracing || r != r->main)
-        return NGX_OK;
-
-    cjaeger_span_finish(ctx->request_span);
-    return NGX_OK;
-}
-
-
-static ngx_int_t
 ngx_http_jaegertracing_init(ngx_conf_t *cf)
 {
     ngx_http_handler_pt        *h;
@@ -379,13 +381,6 @@ ngx_http_jaegertracing_init(ngx_conf_t *cf)
     }
 
     *h = ngx_http_jaegertracing_handler;
-
-    h = ngx_array_push(&jmcf->phases[NGX_HTTP_LOG_PHASE].handlers);
-    if (h == NULL) {
-        return NGX_ERROR;
-    }
-
-    *h = ngx_http_jaegertracing_log;
 
     return NGX_OK;
 }
@@ -672,17 +667,27 @@ ngx_http_jaegertracing_trav_each(const char **name, size_t *name_len, const char
 void *
 ngx_http_jaegertracing_span_start_headers(ngx_http_request_t *r, cjaeger_header_trav_start trav_start, cjaeger_header_trav_each trav_each, void *trav_arg, const char *operation_name, size_t operation_name_len)
 {
-    if (!ngx_http_jaegertracing_is_enabled(r)) {
+    ngx_http_jaegertracing_trav_ctx tctx;
+    tctx.jmcf = ngx_http_get_module_main_conf(r, ngx_http_jaegertracing_module);
+    tctx.trav_start = trav_start;
+    tctx.trav_each = trav_each;
+    tctx.trav_arg = trav_arg;
+
+    void *span = cjaeger_span_start_headers(tracer, ngx_http_jaegertracing_trav_start, ngx_http_jaegertracing_trav_each, &tctx, operation_name, operation_name_len);
+    if (span == NULL)
         return NULL;
+
+    ngx_http_jaegertracing_ctx_t *ctx = ngx_http_jaegertracing_get_module_ctx(r);
+    if (ctx == NULL) {
+        if ((ctx = ngx_http_jaegertracing_add_module_ctx(r)) == NULL) {
+            cjaeger_span_finish(span);
+            return NULL;
+        }
     }
+    if (ctx->request_span == NULL)
+        ctx->request_span = span;
+    ctx->tracing = 1;
 
-    ngx_http_jaegertracing_trav_ctx ctx;
-    ctx.jmcf = ngx_http_get_module_main_conf(r, ngx_http_jaegertracing_module);
-    ctx.trav_start = trav_start;
-    ctx.trav_each = trav_each;
-    ctx.trav_arg = trav_arg;
-
-    void *span = cjaeger_span_start_headers(tracer, ngx_http_jaegertracing_trav_start, ngx_http_jaegertracing_trav_each, &ctx, operation_name, operation_name_len);
     return span;
 }
 
@@ -693,13 +698,15 @@ ngx_http_jaegertracing_span_finish(ngx_http_request_t *r, void *span) {
         return;
     }
 
-    void *request_span = ngx_http_jaegertracing_get_request_span(r);
-    if (span == request_span) {
-        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "request span can't be finished");
-        return;
-    }
+    ngx_http_jaegertracing_ctx_t *ctx = ngx_http_jaegertracing_get_module_ctx(r);
+    void *request_span = ctx->request_span;
 
     cjaeger_span_finish(span);
+
+    if (span == request_span) {
+        ctx->request_span = NULL;
+        ctx->tracing = 0;
+    }
 }
 
 void ngx_http_jaegertracing_span_log2(ngx_http_request_t *r, void *span, const char *key, size_t key_len, const char *value, size_t value_len) {
