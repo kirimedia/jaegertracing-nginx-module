@@ -484,8 +484,19 @@ ngx_http_lua_jaegertracing_span_log(lua_State *L) {
     const char *key = luaL_checklstring(L, 1, &key_len);
     const char *value = lua_tolstring(L, 2, &value_len);
     if (value == NULL) {
-        value = "nil";
-        value_len = 3;
+        if (lua_isboolean(L, 2)) {
+            int flag = lua_toboolean(L, 2);
+            if (flag) {
+                value = "true";
+                value_len = 4;
+            } else {
+                value = "false";
+                value_len = 5;
+            }
+        } else {
+            value = "nil";
+            value_len = 3;
+        }
     }
     ngx_http_lua_jaegertracing_span_log_helper2(L, key, key_len, value, value_len);
     return 0;
