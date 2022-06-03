@@ -336,16 +336,20 @@ static int
 ngx_http_lua_jaegertracing_span_start(lua_State *L) {
     size_t operation_name_len;
     const char *operation_name = luaL_checklstring(L, 1, &operation_name_len);
-    int nargs = lua_gettop(L);
-    if (nargs > 1 && lua_istable(L, 2)) {
+    int ref_type = lua_type(L, 2);
+    if (ref_type == LUA_TNONE || ref_type == LUA_TNIL) {
+        ngx_http_lua_jaegertracing_span_start_helper2(L, operation_name, operation_name_len);
+        return 0;
+    } else if (ref_type == LUA_TTABLE) {
         lua_pushvalue(L, 2);
         int headers = luaL_ref(L, LUA_REGISTRYINDEX);
         ngx_http_lua_jaegertracing_span_start_headers_helper(L, headers, operation_name, operation_name_len);
         luaL_unref(L, LUA_REGISTRYINDEX, headers);
         return 0;
     }
+
     uint64_t trace_id_hi = 0, trace_id_lo = 0, parent_id = 0;
-    if (nargs > 1) {
+    {
         size_t id_len;
         const char *id = lua_tolstring(L, 2, &id_len);
         if (id == NULL)
@@ -362,7 +366,8 @@ ngx_http_lua_jaegertracing_span_start(lua_State *L) {
                 return luaL_error(L, "trace_id length must be equal to 16 or 32");
         }
     }
-    if (nargs > 2) {
+    ref_type = lua_type(L, 3);
+    if (ref_type != LUA_TNONE && ref_type != LUA_TNIL) {
         size_t id_len;
         const char *id = lua_tolstring(L, 3, &id_len);
         if (id == NULL)
