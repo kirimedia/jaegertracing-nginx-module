@@ -314,6 +314,33 @@ ngx_http_lua_jaegertracing_span_log_helper2(void *data, const char *key, size_t 
     return;
 }
 
+#define NGX_HTTP_LUA_JAEGERTRACING_SPAN_LOG_HELPER_TRIV_IMPL(name, type) \
+void \
+ngx_http_lua_jaegertracing_span_log ## name ## _helper(void *data, const char *key, size_t key_len, type value) { \
+    lua_State *L = (lua_State*)data; \
+ \
+    ngx_http_request_t *r; \
+    r = ngx_http_lua_get_req(L); \
+ \
+    if (r == NULL) { \
+        luaL_error(L, "no request object found"); \
+    } \
+ \
+    if (!ngx_http_jaegertracing_is_enabled(r)) \
+        return; \
+ \
+    void *span = ngx_http_lua_jaegertracing_span_peek(L); \
+    if (!span) \
+        return; \
+ \
+    ngx_http_jaegertracing_span_log ## name(r, span, key, key_len, value); \
+}
+
+NGX_HTTP_LUA_JAEGERTRACING_SPAN_LOG_HELPER_TRIV_IMPL(d, int64_t)
+NGX_HTTP_LUA_JAEGERTRACING_SPAN_LOG_HELPER_TRIV_IMPL(u, uint64_t)
+NGX_HTTP_LUA_JAEGERTRACING_SPAN_LOG_HELPER_TRIV_IMPL(fp, double)
+NGX_HTTP_LUA_JAEGERTRACING_SPAN_LOG_HELPER_TRIV_IMPL(b, bool)
+
 void
 ngx_http_lua_jaegertracing_span_log_helper(void *data, const char *key, const char *value) {
     ngx_http_lua_jaegertracing_span_log_helper2(data, key, key != NULL ? strlen(key) : 0, value, value != NULL ? strlen(value) : 0);
@@ -485,24 +512,21 @@ ngx_http_lua_jaegertracing_span_finish(lua_State *L) {
 
 static int
 ngx_http_lua_jaegertracing_span_log(lua_State *L) {
-    size_t key_len, value_len;
+    size_t key_len;
     const char *key = luaL_checklstring(L, 1, &key_len);
-    const char *value = lua_tolstring(L, 2, &value_len);
-    if (value == NULL) {
-        if (lua_isboolean(L, 2)) {
-            int flag = lua_toboolean(L, 2);
-            if (flag) {
-                value = "true";
-                value_len = 4;
-            } else {
-                value = "false";
-                value_len = 5;
-            }
-        } else {
-            value = "nil";
-            value_len = 3;
-        }
+    int value_type = lua_type(L, 2);
+    if (value_type == LUA_TSTRING) {
+        size_t value_len;
+        const char *value = lua_tolstring(L, 2, &value_len);
+        ngx_http_lua_jaegertracing_span_log_helper2(L, key, key_len, value, value_len);
+    } else if (value_type == LUA_TNUMBER) {
+        lua_Number value = lua_tonumber(L, 2);
+        ngx_http_lua_jaegertracing_span_logfp_helper(L, key, key_len, value);
+    } else if (value_type == LUA_TBOOLEAN) {
+        int value = lua_toboolean(L, 2);
+        ngx_http_lua_jaegertracing_span_logb_helper(L, key, key_len, value);
+    } else {
+        ngx_http_lua_jaegertracing_span_log_helper2(L, key, key_len, "nil", 3);
     }
-    ngx_http_lua_jaegertracing_span_log_helper2(L, key, key_len, value, value_len);
     return 0;
 }

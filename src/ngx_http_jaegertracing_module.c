@@ -718,6 +718,21 @@ void ngx_http_jaegertracing_span_log2(ngx_http_request_t *r, void *span, const c
     cjaeger_span_log3(span, key, key_len, value, value_len);
 }
 
+#define NGX_HTTP_JAEGERTRACING_SPAN_LOG_TRIV_IMPL(name, type) \
+void ngx_http_jaegertracing_span_log ## name(ngx_http_request_t *r, void *span, const char *key, size_t key_len, type value) { \
+ \
+    if (!ngx_http_jaegertracing_is_enabled(r)) { \
+        return; \
+    } \
+ \
+    cjaeger_span_log ## name(span, key, key_len, value); \
+}
+
+NGX_HTTP_JAEGERTRACING_SPAN_LOG_TRIV_IMPL(d, int64_t)
+NGX_HTTP_JAEGERTRACING_SPAN_LOG_TRIV_IMPL(u, uint64_t)
+NGX_HTTP_JAEGERTRACING_SPAN_LOG_TRIV_IMPL(fp, double)
+NGX_HTTP_JAEGERTRACING_SPAN_LOG_TRIV_IMPL(b, bool)
+
 void
 ngx_http_jaegertracing_span_log(ngx_http_request_t *r, void *span, const char *key, const char *value) {
 
