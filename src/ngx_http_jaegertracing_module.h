@@ -5,6 +5,7 @@
 #include <ngx_config.h>
 #include <ngx_core.h>
 #include <ngx_http.h>
+#include <stdbool.h>
 #include <cjaeger.h>
 
 ngx_int_t ngx_http_jaegertracing_is_enabled(ngx_http_request_t *r);
@@ -19,5 +20,9 @@ void *ngx_http_jaegertracing_span_start_headers(ngx_http_request_t *r, cjaeger_h
 void ngx_http_jaegertracing_span_finish(ngx_http_request_t *r, void *span);
 void ngx_http_jaegertracing_span_log(ngx_http_request_t *r, void *span, const char *key, const char *value);
 void ngx_http_jaegertracing_span_log2(ngx_http_request_t *r, void *span, const char *key, size_t key_len, const char *value, size_t value_len);
+void ngx_http_jaegertracing_span_logd(ngx_http_request_t *r, void *span, const char *key, size_t key_len, int64_t value);
+void ngx_http_jaegertracing_span_logu(ngx_http_request_t *r, void *span, const char *key, size_t key_len, uint64_t value);
+void ngx_http_jaegertracing_span_logfp(ngx_http_request_t *r, void *span, const char *key, size_t key_len, double value);
+void ngx_http_jaegertracing_span_logb(ngx_http_request_t *r, void *span, const char *key, size_t key_len, bool value);
 
 #endif
