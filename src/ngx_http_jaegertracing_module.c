@@ -351,9 +351,9 @@ ngx_http_jaegertracing_handler(ngx_http_request_t *r)
                 cjaeger_span_log2(ctx->request_span, "x_request_id", (char*)x_request_id->data, x_request_id->len);
 
             if (value.len != 0)
-                cjaeger_span_log3(ctx->request_span, "user", 4, "true", 4);
+                cjaeger_span_logb(ctx->request_span, "user", 4, true);
             else
-                cjaeger_span_log3(ctx->request_span, "sample", 6, "true", 4);
+                cjaeger_span_logb(ctx->request_span, "sample", 6, true);
         }
     }
 
