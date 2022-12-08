@@ -1,10 +1,4 @@
-#include <nginx.h>
-#include <ngx_config.h>
-#include <ngx_core.h>
-#include <ngx_http.h>
-
-#include <cjaeger.h>
-#include <stdbool.h>
+#include "ngx_http_jaegertracing_module.h"
 
 static const ngx_str_t ngx_http_jaegertracing_request_name = ngx_string("request");
 
@@ -19,8 +13,10 @@ typedef struct {
 
 typedef struct {
     ngx_array_t              *from;     /* array of ngx_cidr_t */
+    ngx_array_t              *parent_from; /* array of ngx_cidr_t */
     ngx_http_complex_value_t *variable;
     double                    sample;
+    ngx_flag_t                parent;
 } ngx_http_jaegertracing_loc_conf_t;
 
 typedef struct {
@@ -89,7 +85,7 @@ static ngx_command_t ngx_http_jaegertracing_commands[] = {
       NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
       ngx_http_set_jaegertracing_from,
       NGX_HTTP_LOC_CONF_OFFSET,
-      0,
+      offsetof(ngx_http_jaegertracing_loc_conf_t, from),
       NULL },
 
     { ngx_string("set_jaegertracing"),
@@ -104,6 +100,20 @@ static ngx_command_t ngx_http_jaegertracing_commands[] = {
       ngx_http_set_jaegertracing_sample,
       NGX_HTTP_LOC_CONF_OFFSET,
       0,
+      NULL },
+
+    { ngx_string("set_jaegertracing_parent"),
+      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
+      ngx_conf_set_flag_slot,
+      NGX_HTTP_LOC_CONF_OFFSET,
+      offsetof(ngx_http_jaegertracing_loc_conf_t, parent),
+      NULL },
+
+    { ngx_string("set_jaegertracing_parent_from"),
+      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
+      ngx_http_set_jaegertracing_from,
+      NGX_HTTP_LOC_CONF_OFFSET,
+      offsetof(ngx_http_jaegertracing_loc_conf_t, parent_from),
       NULL },
 
       ngx_null_command
@@ -229,6 +239,7 @@ ngx_http_jaegertracing_create_loc_conf(ngx_conf_t *cf)
         return NULL;
     }
     conf->sample = -1;
+    conf->parent = NGX_CONF_UNSET;
 
     return conf;
 }
@@ -242,6 +253,12 @@ ngx_http_jaegertracing_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child)
 
     if (conf->from == NULL) {
         conf->from = prev->from;
+    }
+
+    ngx_conf_merge_value(conf->parent, prev->parent, 0);
+
+    if (conf->parent_from == NULL) {
+        conf->parent_from = prev->parent_from;
     }
 
     if (conf->variable == NULL) {
@@ -311,20 +328,91 @@ ngx_http_jaegertracing_request_log(ngx_http_request_t *r, void *span)
         cjaeger_span_log2(span, "x_request_id", (char*)x_request_id->data, x_request_id->len);
 }
 
+struct ngx_http_jaegertracing_parent_trav {
+    ngx_http_request_t *r;
+    ngx_list_part_t *part;
+    ngx_uint_t i;
+};
+
+static int
+ngx_http_jaegertracing_parent_trav_start(void *arg)
+{
+    struct ngx_http_jaegertracing_parent_trav *ctx = arg;
+
+    ctx->part = &ctx->r->headers_in.headers.part;
+    ctx->i = 0;
+    return 0;
+}
+
+static int
+ngx_http_jaegertracing_parent_trav_each(const char **name, size_t *name_len, const char **value, size_t *value_len, void *arg)
+{
+    struct ngx_http_jaegertracing_parent_trav *trav = arg;
+
+    if (trav->i >= trav->part->nelts) {
+        ngx_list_part_t *next = trav->part->next;
+        if (next == NULL)
+            return 1;
+        trav->part = next;
+        trav->i = 0;
+    }
+    ngx_table_elt_t *header = trav->part->elts;
+    header += trav->i;
+    *name = (char *)header->key.data;
+    *name_len = header->key.len;
+    *value = (char *)header->value.data;
+    *value_len = header->value.len;
+
+    trav->i++;
+
+    return 0;
+}
+
+static ngx_int_t
+ngx_http_jaegertracing_parent(ngx_http_request_t *r, ngx_http_jaegertracing_loc_conf_t *jlcf)
+{
+    if (jlcf->parent_from != NULL && ngx_cidr_match(r->connection->sockaddr, jlcf->parent_from) != NGX_OK)
+        return NGX_DECLINED;
+
+    struct ngx_http_jaegertracing_parent_trav trav;
+
+    trav.r = r;
+
+    void *span = ngx_http_jaegertracing_span_start_headers(r, ngx_http_jaegertracing_parent_trav_start, ngx_http_jaegertracing_parent_trav_each, &trav,
+        (char*)ngx_http_jaegertracing_request_name.data, ngx_http_jaegertracing_request_name.len);
+
+    if (span == NULL)
+        return NGX_DECLINED;
+
+    ngx_http_jaegertracing_request_log(r, span);
+    cjaeger_span_logb(span, "parent", 6, true);
+
+    return NGX_OK;
+}
+
 static ngx_int_t
 ngx_http_jaegertracing_handler(ngx_http_request_t *r)
 {
     ngx_http_jaegertracing_ctx_t       *ctx;
     ngx_http_jaegertracing_loc_conf_t  *jlcf;
 
-    jlcf = ngx_http_get_module_loc_conf(r, ngx_http_jaegertracing_module);
-    if (jlcf->variable == NULL) {
-        return NGX_DECLINED;
-    }
-
     ctx = ngx_http_jaegertracing_get_module_ctx(r);
 
     if (ctx) {
+        return NGX_DECLINED;
+    }
+
+    jlcf = ngx_http_get_module_loc_conf(r, ngx_http_jaegertracing_module);
+
+    if (jlcf->parent) {
+        ngx_int_t rc = ngx_http_jaegertracing_parent(r, jlcf);
+
+        if (rc != NGX_DECLINED) {
+            return rc == NGX_OK ? NGX_DECLINED : rc;
+        }
+    }
+
+    if (jlcf->variable == NULL) {
         return NGX_DECLINED;
     }
 
@@ -426,7 +514,7 @@ ngx_http_set_jaegertracing_header(ngx_conf_t *cf, ngx_command_t *cmd, void *conf
 static char*
 ngx_http_set_jaegertracing_from(ngx_conf_t *cf, ngx_command_t *cmd, void *conf) {
 
-    ngx_http_jaegertracing_loc_conf_t *jlcf = conf;
+    ngx_array_t **parray = conf + cmd->offset;
 
     ngx_int_t                rc;
     ngx_str_t               *value;
@@ -434,15 +522,15 @@ ngx_http_set_jaegertracing_from(ngx_conf_t *cf, ngx_command_t *cmd, void *conf) 
 
     value = cf->args->elts;
 
-    if (jlcf->from == NULL) {
-        jlcf->from = ngx_array_create(cf->pool, 2,
+    if (*parray == NULL) {
+        *parray = ngx_array_create(cf->pool, 2,
                                       sizeof(ngx_cidr_t));
-        if (jlcf->from == NULL) {
+        if (*parray == NULL) {
             return NGX_CONF_ERROR;
         }
     }
 
-    cidr = ngx_array_push(jlcf->from);
+    cidr = ngx_array_push(*parray);
     if (cidr == NULL) {
         return NGX_CONF_ERROR;
     }
