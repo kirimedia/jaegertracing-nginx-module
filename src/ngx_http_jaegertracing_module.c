@@ -434,9 +434,9 @@ ngx_http_jaegertracing_handler(ngx_http_request_t *r)
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
-    if (sample || (value.len != 0 && *value.data != '0')) {
+    if (sample || (value.len == 1 ? *value.data != '0' : value.len != 0)) {
         ctx->tracing = 1;
-        if (!sample && isdigit(*value.data) && *value.data - '0' >= 2)
+        if (!sample && value.len == 1 && *value.data >= '2' && *value.data <= '9')
             span_flags |= CJAEGER_SPAN_DEBUG;
     }
 
