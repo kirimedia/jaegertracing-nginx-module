@@ -416,16 +416,27 @@ ngx_http_jaegertracing_handler(ngx_http_request_t *r)
         return NGX_DECLINED;
     }
 
-    ngx_str_t value = ngx_null_string;
+    unsigned tracing_level = 0;
     int sample = 0;
     unsigned span_flags = 0;
 
     if (jlcf->from == NULL || ngx_cidr_match(r->connection->sockaddr, jlcf->from) == NGX_OK) {
 
+        ngx_str_t value = ngx_null_string;
         ngx_http_complex_value_t *cv = jlcf->variable;
         if (ngx_http_complex_value(r, cv, &value) != NGX_OK)
             return NGX_HTTP_INTERNAL_SERVER_ERROR;
-    } else if (jlcf->sample > 0) {
+        if (value.len > 1)
+            tracing_level = 1;
+        else if (value.len == 1 && *value.data != '0') {
+            tracing_level = 1;
+            if (*value.data >= '2' && *value.data <= '9') {
+                tracing_level = 2;
+                span_flags |= CJAEGER_SPAN_DEBUG;
+            }
+        }
+    }
+    if (tracing_level == 0 && jlcf->sample > 0) {
         sample = (ngx_random() / (double)((uint64_t)RAND_MAX + 1)) < jlcf->sample;
     }
 
@@ -434,18 +445,13 @@ ngx_http_jaegertracing_handler(ngx_http_request_t *r)
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
-    if (sample || (value.len != 0 && *value.data != '0')) {
+    if (tracing_level > 0 || sample) {
         ctx->tracing = 1;
-        if (!sample && isdigit(*value.data) && *value.data - '0' >= 2)
-            span_flags |= CJAEGER_SPAN_DEBUG;
-    }
-
-    if (ctx->tracing) {
         ctx->request_span = cjaeger_span_start3(tracer, NULL, (char*)ngx_http_jaegertracing_request_name.data, ngx_http_jaegertracing_request_name.len, span_flags);
         if (ctx->request_span) {
             ngx_http_jaegertracing_request_log(r, ctx->request_span);
 
-            if (value.len != 0)
+            if (tracing_level > 0)
                 cjaeger_span_logb(ctx->request_span, "user", 4, true);
             else
                 cjaeger_span_logb(ctx->request_span, "sample", 6, true);
