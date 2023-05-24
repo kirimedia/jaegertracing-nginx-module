@@ -396,6 +396,10 @@ ngx_http_jaegertracing_handler(ngx_http_request_t *r)
     ngx_http_jaegertracing_ctx_t       *ctx;
     ngx_http_jaegertracing_loc_conf_t  *jlcf;
 
+    if (!tracer) {
+        return NGX_DECLINED;
+    }
+
     ctx = ngx_http_jaegertracing_get_module_ctx(r);
 
     if (ctx) {
