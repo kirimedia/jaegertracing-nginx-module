@@ -7,6 +7,11 @@
 #include <ngx_http.h>
 #include <stdbool.h>
 #include <cjaeger.h>
+#include <ctype.h>
+
+// https://www.w3.org/TR/trace-context/
+// strlen("traceparent=") + 55 + strlen("tracestate=") + 512 + spaces
+#define JAEGERTRACING_HEADERS_VARIABLE_SIZE 1024
 
 ngx_int_t ngx_http_jaegertracing_is_enabled(ngx_http_request_t *r);
 void *ngx_http_jaegertracing_get_request_span(ngx_http_request_t *r);
