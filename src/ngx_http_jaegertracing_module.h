@@ -25,4 +25,28 @@ void ngx_http_jaegertracing_span_logu(ngx_http_request_t *r, void *span, const c
 void ngx_http_jaegertracing_span_logfp(ngx_http_request_t *r, void *span, const char *key, size_t key_len, double value);
 void ngx_http_jaegertracing_span_logb(ngx_http_request_t *r, void *span, const char *key, size_t key_len, bool value);
 
+typedef struct {
+    ngx_str_t service_name;
+    ngx_str_t agent_addr;
+    ngx_str_t collector_endpoint;
+    ngx_flag_t traceid_128bit;
+    cjaeger_tracer_headers_config headers_config;
+    unsigned flags;
+} ngx_http_jaegertracing_main_conf_t;
+
+typedef struct {
+    ngx_array_t              *from;     /* array of ngx_cidr_t */
+    ngx_array_t              *parent_from; /* array of ngx_cidr_t */
+    ngx_http_complex_value_t *variable;
+    double                    sample;
+    ngx_flag_t                parent;
+} ngx_http_jaegertracing_loc_conf_t;
+
+typedef struct {
+    ngx_int_t tracing;
+    void *request_span;
+} ngx_http_jaegertracing_ctx_t;
+
+extern ngx_module_t ngx_http_jaegertracing_module;
+
 #endif
