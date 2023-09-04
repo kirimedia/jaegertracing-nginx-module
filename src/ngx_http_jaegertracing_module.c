@@ -311,7 +311,7 @@ ngx_http_jaegertracing_add_module_ctx(ngx_http_request_t *r)
 }
 
 static void
-ngx_http_jaegertracing_request_log(ngx_http_request_t *r, void *span)
+ngx_http_jaegertracing_log_x_request_id(ngx_http_request_t *r, void *span)
 {
     static const ngx_str_t x_request_id_name = ngx_string("x_request_id");
     static ngx_uint_t x_request_id_hash;
@@ -320,12 +320,19 @@ ngx_http_jaegertracing_request_log(ngx_http_request_t *r, void *span)
     if (!x_request_id_hash)
         x_request_id_hash = ngx_hash_key(x_request_id_name.data, x_request_id_name.len);
 
+    x_request_id = ngx_http_get_variable(r, (ngx_str_t * ) & x_request_id_name, x_request_id_hash);
+    if (x_request_id != NULL && x_request_id->len != 0)
+        cjaeger_span_log2(span, "x_request_id", (char *) x_request_id->data, x_request_id->len);
+}
+
+static void
+ngx_http_jaegertracing_request_log(ngx_http_request_t *r, void *span, bool log_x_request_id)
+{
     cjaeger_span_log2(span, "uri", (char*)r->uri.data, r->uri.len);
     cjaeger_span_log2(span, "args", (char*)r->args.data, r->args.len);
-
-    x_request_id = ngx_http_get_variable(r, (ngx_str_t *)&x_request_id_name, x_request_id_hash);
-    if (x_request_id != NULL && x_request_id->len != 0)
-        cjaeger_span_log2(span, "x_request_id", (char*)x_request_id->data, x_request_id->len);
+    if (log_x_request_id) {
+        ngx_http_jaegertracing_log_x_request_id(r, span);
+    }
 }
 
 struct ngx_http_jaegertracing_parent_trav {
@@ -384,14 +391,13 @@ ngx_http_jaegertracing_parent(ngx_http_request_t *r, ngx_http_jaegertracing_loc_
     if (span == NULL)
         return NGX_DECLINED;
 
-    ngx_http_jaegertracing_request_log(r, span);
     cjaeger_span_logb(span, "parent", 6, true);
 
     return NGX_OK;
 }
 
 static ngx_int_t
-ngx_http_jaegertracing_handler(ngx_http_request_t *r)
+ngx_http_jaegertracing_handler(ngx_http_request_t *r, ngx_uint_t phase)
 {
     ngx_http_jaegertracing_ctx_t       *ctx;
     ngx_http_jaegertracing_loc_conf_t  *jlcf;
@@ -400,9 +406,15 @@ ngx_http_jaegertracing_handler(ngx_http_request_t *r)
         return NGX_DECLINED;
     }
 
+    bool log_x_request_id = (phase == NGX_HTTP_PREACCESS_PHASE);
+
     ctx = ngx_http_jaegertracing_get_module_ctx(r);
 
     if (ctx) {
+        if (ctx->request_span && log_x_request_id) {
+            ngx_http_jaegertracing_log_x_request_id(r, ctx->request_span);
+        }
+
         return NGX_DECLINED;
     }
 
@@ -412,6 +424,8 @@ ngx_http_jaegertracing_handler(ngx_http_request_t *r)
         ngx_int_t rc = ngx_http_jaegertracing_parent(r, jlcf);
 
         if (rc != NGX_DECLINED) {
+            ctx = ngx_http_jaegertracing_get_module_ctx(r);
+            ngx_http_jaegertracing_request_log(r, ctx->request_span, log_x_request_id);
             return rc == NGX_OK ? NGX_DECLINED : rc;
         }
     }
@@ -453,7 +467,7 @@ ngx_http_jaegertracing_handler(ngx_http_request_t *r)
         ctx->tracing = 1;
         ctx->request_span = cjaeger_span_start3(tracer, NULL, (char*)ngx_http_jaegertracing_request_name.data, ngx_http_jaegertracing_request_name.len, span_flags);
         if (ctx->request_span) {
-            ngx_http_jaegertracing_request_log(r, ctx->request_span);
+            ngx_http_jaegertracing_request_log(r, ctx->request_span, log_x_request_id);
 
             if (tracing_level > 0)
                 cjaeger_span_logb(ctx->request_span, "user", 4, true);
@@ -463,6 +477,18 @@ ngx_http_jaegertracing_handler(ngx_http_request_t *r)
     }
 
     return NGX_DECLINED;
+}
+
+static ngx_int_t
+ngx_http_jaegertracing_server_rewrite_handler(ngx_http_request_t *r)
+{
+    return ngx_http_jaegertracing_handler(r, NGX_HTTP_SERVER_REWRITE_PHASE);
+}
+
+static ngx_int_t
+ngx_http_jaegertracing_preaccess_handler(ngx_http_request_t *r)
+{
+    return ngx_http_jaegertracing_handler(r, NGX_HTTP_PREACCESS_PHASE);
 }
 
 static ngx_int_t
@@ -478,14 +504,14 @@ ngx_http_jaegertracing_init(ngx_conf_t *cf)
         return NGX_ERROR;
     }
 
-    *h = ngx_http_jaegertracing_handler;
+    *h = ngx_http_jaegertracing_server_rewrite_handler;
 
     h = ngx_array_push(&jmcf->phases[NGX_HTTP_PREACCESS_PHASE].handlers);
     if (h == NULL) {
         return NGX_ERROR;
     }
 
-    *h = ngx_http_jaegertracing_handler;
+    *h = ngx_http_jaegertracing_preaccess_handler;
 
     return NGX_OK;
 }
