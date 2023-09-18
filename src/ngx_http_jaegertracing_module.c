@@ -1,5 +1,7 @@
 #include "ngx_http_jaegertracing_module.h"
 
+#define JAEGERTRACING_HEADER_VARIABLE_PREFIX "jaegertracing_header_"
+
 static const ngx_str_t ngx_http_jaegertracing_request_name = ngx_string("request");
 
 typedef struct {
@@ -26,6 +28,7 @@ typedef struct {
 
 static ngx_int_t ngx_http_jaegertracing_init_process(ngx_cycle_t *cycle);
 static void ngx_http_jaegertracing_exit_process(ngx_cycle_t *cycle);
+static ngx_int_t ngx_http_jaegertracing_preconf(ngx_conf_t *cf);
 static ngx_int_t ngx_http_jaegertracing_init(ngx_conf_t *cf);
 static void *ngx_http_jaegertracing_create_main_conf(ngx_conf_t *cf);
 static char *ngx_http_jaegertracing_init_main_conf(ngx_conf_t* cf, void *conf);
@@ -36,6 +39,19 @@ static char *ngx_http_set_jaegertracing_header(ngx_conf_t *cf, ngx_command_t *cm
 static char *ngx_http_set_jaegertracing_from(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 static char *ngx_http_set_jaegertracing_variable(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 static char *ngx_http_set_jaegertracing_sample(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
+static int ngx_http_jaegertracing_header_variable_set(const char *name, size_t name_len, const char *value, size_t value_len, void *arg);
+static ngx_int_t ngx_http_jaegertracing_header_variable(ngx_http_request_t *r, ngx_http_variable_value_t *v, uintptr_t data);
+
+static ngx_http_variable_t ngx_http_jaegertracing_vars[] = {
+    { ngx_string(JAEGERTRACING_HEADER_VARIABLE_PREFIX),
+      NULL,
+      ngx_http_jaegertracing_header_variable,
+      0,
+      NGX_HTTP_VAR_PREFIX,
+      0 },
+
+      ngx_http_null_variable
+};
 
 static ngx_command_t ngx_http_jaegertracing_commands[] = {
 
@@ -120,7 +136,7 @@ static ngx_command_t ngx_http_jaegertracing_commands[] = {
 };
 
 static ngx_http_module_t ngx_http_jaegertracing_module_ctx = {
-    NULL,                                  /* preconfiguration */
+    ngx_http_jaegertracing_preconf,        /* preconfiguration */
     ngx_http_jaegertracing_init,           /* postconfiguration */
 
     ngx_http_jaegertracing_create_main_conf,/* create main configuration */
@@ -320,9 +336,9 @@ ngx_http_jaegertracing_log_x_request_id(ngx_http_request_t *r, void *span)
     if (!x_request_id_hash)
         x_request_id_hash = ngx_hash_key(x_request_id_name.data, x_request_id_name.len);
 
-    x_request_id = ngx_http_get_variable(r, (ngx_str_t * ) & x_request_id_name, x_request_id_hash);
+    x_request_id = ngx_http_get_variable(r, (ngx_str_t *)&x_request_id_name, x_request_id_hash);
     if (x_request_id != NULL && x_request_id->len != 0)
-        cjaeger_span_log2(span, "x_request_id", (char *) x_request_id->data, x_request_id->len);
+        cjaeger_span_log2(span, "x_request_id", (char *)x_request_id->data, x_request_id->len);
 }
 
 static void
@@ -489,6 +505,23 @@ static ngx_int_t
 ngx_http_jaegertracing_preaccess_handler(ngx_http_request_t *r)
 {
     return ngx_http_jaegertracing_handler(r, NGX_HTTP_PREACCESS_PHASE);
+}
+
+static ngx_int_t
+ngx_http_jaegertracing_preconf(ngx_conf_t *cf) {
+    ngx_http_variable_t *var, *v;
+
+    for (v = ngx_http_jaegertracing_vars; v->name.len; v++) {
+        var = ngx_http_add_variable(cf, &v->name, v->flags);
+        if (var == NULL) {
+            return NGX_ERROR;
+        }
+
+        var->get_handler = v->get_handler;
+        var->data = v->data;
+    }
+
+    return NGX_OK;
 }
 
 static ngx_int_t
@@ -872,4 +905,66 @@ ngx_http_jaegertracing_span_log(ngx_http_request_t *r, void *span, const char *k
     }
 
     cjaeger_span_log(span, key, value);
+}
+
+typedef struct ngx_http_jaegertracing_header_variable_set_ctx {
+    ngx_str_t *header_name;
+    ngx_http_request_t *r;
+    ngx_http_variable_value_t *v;
+} ngx_http_jaegertracing_header_variable_set_ctx;
+
+static int
+ngx_http_jaegertracing_header_variable_set(const char *name, size_t name_len, const char *value, size_t value_len, void *arg) {
+    ngx_http_jaegertracing_header_variable_set_ctx *ctx = arg;
+    ngx_str_t                                      *header_name = ctx->header_name;
+    ngx_http_variable_value_t                      *v = ctx->v;
+    u_char                                         *header_value;
+
+    if (header_name->len != name_len || !ctx->v->not_found)
+        return 0;
+
+    if (ngx_strncmp(name, header_name->data, header_name->len) == 0) {
+        header_value = (u_char *)ngx_palloc(ctx->r->pool, value_len);
+        ngx_memcpy(header_value, value, value_len);
+        v->data = header_value;
+        v->len = value_len;
+        v->valid = 1;
+        v->no_cacheable = 0;
+        v->not_found = 0;
+    }
+
+    return 0;
+}
+
+static ngx_int_t
+ngx_http_jaegertracing_header_variable(ngx_http_request_t *r, ngx_http_variable_value_t *v, uintptr_t data) {
+    ngx_http_jaegertracing_header_variable_set_ctx set_ctx;
+    ngx_http_jaegertracing_ctx_t                  *ctx;
+    ngx_str_t                                     *name;
+    ngx_str_t                                      header_name;
+
+    v->not_found = 1;
+
+    if (!ngx_http_jaegertracing_is_enabled(r))
+        return NGX_OK;
+
+    ctx = ngx_http_jaegertracing_get_module_ctx(r);
+    if (!ctx)
+        return NGX_OK;
+
+    if (!ctx->request_span)
+        return NGX_OK;
+
+    name = (ngx_str_t *)data;
+    header_name.len = name->len - (sizeof(JAEGERTRACING_HEADER_VARIABLE_PREFIX) - 1);
+    header_name.data = name->data + sizeof(JAEGERTRACING_HEADER_VARIABLE_PREFIX) - 1;
+
+    set_ctx.header_name = &header_name;
+    set_ctx.r = r;
+    set_ctx.v = v;
+
+    if (cjaeger_span_headers_set(ctx->request_span, ngx_http_jaegertracing_header_variable_set, &set_ctx) < 0)
+        return NGX_ERROR;
+
+    return NGX_OK;
 }
